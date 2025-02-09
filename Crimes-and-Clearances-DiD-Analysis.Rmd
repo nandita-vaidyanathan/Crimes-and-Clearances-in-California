@@ -1,0 +1,111 @@
+---
+title: "Crimes and Clearances"
+author: "Nandita"
+date: "2024-11-22"
+output: pdf_document
+---
+Assembly Bill 109 was passed in 2011, shifting the responsibility of housing non-violent and
+non-serious offenses from state facilities to county jails. Utilizing a difference-in-difference model where
+Los Angeles, Orange, and Riverside Counties are treated and other units are control we perform a
+difference-in-difference analysis where our outcome variable is Property crime
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(plm)
+library(stargazer)
+library(ggplot2)
+library(tinytex)
+
+# load in the dataset
+crime_data <- read_csv("Crimes_and_Clearances_with_Arson-1985-2023 (1).csv")
+```
+
+The raw data represents county-level crime statistics aggregated annually. 
+
+We aggregate the data to the county-by-year level summing up the data grouping county and year.
+```{r, warning=FALSE}
+crime_data <- crime_data %>%
+  group_by(County, Year) %>%
+  summarise(across(ends_with("sum"), sum, na.rm = TRUE), .groups = 'drop')
+```
+Since the variables already represent sums at the lower level, it is appropriate
+to find the total count of crimes at the county level. Finding the average will 
+dilute the actual crime counts.
+
+
+First, we generate a plot to identify if the parallel trends assumption is satisfied.
+
+```{r, warning=FALSE}
+# assign values 1, 0 to treated and control groups
+crime_data$treated_county <- ifelse(crime_data$County %in% 
+                                      c("Los Angeles County", "Orange County",
+                                        "Riverside County"), 1, 0)
+crime_data$treated_time <- ifelse(crime_data$Year >= 2011, 1, 0)
+
+# Interaction term for the difference-in-difference model
+crime_data$treated <- crime_data$treated_county * crime_data$treated_time
+
+# Create a factor variable for treated and control groups
+crime_data$treated_county <- factor(crime_data$treated_county, levels = c(0, 1),
+                                    labels = c("Control", "Treated"))
+
+# calculate average property crime rate across counties to compare trends 
+#between the treated group and control
+property_data <- crime_data %>%
+  group_by(Year, treated_county) %>%
+  mutate(avg_crime_rate = sum(Property_sum)/n ())
+
+# Plot to check parallel trends
+ggplot(data = property_data, aes(x = Year, y = avg_crime_rate, color = 
+                                   treated_county, group = treated_county)) +
+  geom_line(size = 1.2) +  
+  geom_vline(xintercept = 2011, linetype = "dashed", color = "gray40", 
+             size = 0.8) +
+  scale_color_manual(values = c("Control" = "#0072B2", "Treated" = "#D55E00")) + 
+  labs(
+    title = "Difference-in-Differences - Parallel Trends Assumption",
+    x = "Year",
+    y = "Averagae Property Crime Rate",
+    color = "Group"
+  ) + 
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),  
+    legend.position = "top",  
+    legend.title = element_text(face = "bold") 
+  )
+```
+The plot suggests that the parallel trends assumption is violated, meaning that
+the treated counties were not following a similar trend to the control counties 
+before the passing of Assembly Bill 109.
+
+This violation weakens the validity of a difference-in-differences analysis,
+as the assumption that the treated and control counties would have followed the 
+same trend in the absence of the policy change is no longer valid. 
+
+```{r, warning=FALSE,results='asis'}
+model <- plm(avg_crime_rate ~ treated_county*treated_time,index = c("County", 
+                                                                    "Year")
+             ,data=property_data )
+
+stargazer(model, type = "latex", title = "Difference-in-Differences Model with 
+          Two-Way Fixed Effects",
+          dep.var.labels = "Average Crime Rate",
+          covariate.labels = c("Treated Time",
+                               "Treated Location x Treated Time"),
+          omit.stat = c("f", "ser"), 
+          no.space = TRUE)
+```
+On average, property crime rates across all counties decreased by approximately
+4,076 crimes after 2011, regardless of whether they were in treated counties or 
+not. The result is statistically significant (p < 0.01). After the policy, 
+treated counties experienced an average additional reduction of 54,783 property 
+crimes, compared to control counties. This result is also statistically 
+significant (p < 0.01). From the r-squared value we can interpret that about 
+37.4 percent of the variation in the model is explained by average property 
+crime. However, since the parallel trends assumption is violated, 
+we assume that the results are suggestive but not conclusive.
+```
+
